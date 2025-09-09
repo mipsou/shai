@@ -3,28 +3,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: shai
 
-    # Pas de provider imposé. Laissez vide.
-    # (Exemples à décommenter si vous voulez overrider la config)
-    # environment:
-    #   OPENAI_API_BASE: "http://10.0.2.50:11434/v1"
-    #   OPENAI_API_KEY: "ollama"
-    #   SHAI_MODEL_DEFAULT: "qwen2.5:7b-instruct"
-
+    # Aucun provider imposé : choisissez via `shai auth`
     volumes:
-      # Config utilisateur PERSISTANTE (écriture autorisée)
-      - shai_config:/home/nonroot/.config/shai
-      # Exemple d'env monté en RO (facultatif)
+      - shai_config:/home/shai/.config/shai
       - type: bind
         source: ../.env.example
-        target: /home/nonroot/.env
+        target: /home/shai/.env
         read_only: true
 
     read_only: true
     tmpfs:
       - /tmp
-      - /home/nonroot/.cache
+      - /home/shai/.cache
     cap_drop: [ "ALL" ]
     security_opt:
       - no-new-privileges:true
