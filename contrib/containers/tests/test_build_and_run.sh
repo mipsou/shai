@@ -11,9 +11,12 @@ assert_cmd bash
 
 IMG="shai:test"
 CNT="shai_test_run"
+REF="${SHAI_REF:-main}"      # <— récupère éventuellement du CI
 
 log "Build de l'image"
-docker build -f "$ROOT/docker/Dockerfile" -t "$IMG" "$ROOT/docker"
+docker build \
+  --build-arg "SHAI_REF=${REF}" \
+  -f "$ROOT/docker/Dockerfile" -t "$IMG" "$ROOT/docker"
 
 log "Exécution: --version"
 out="$(docker run --rm "$IMG" --version || true)"
