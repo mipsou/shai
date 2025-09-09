@@ -1,5 +1,4 @@
 name: containers-ci
-
 on:
   push:
     branches: [ main ]
@@ -9,7 +8,8 @@ on:
   pull_request:
     paths:
       - 'contrib/containers/**'
-
+env:
+  SHAI_REF: HEAD~1
 jobs:
   test:
     runs-on: ubuntu-latest
