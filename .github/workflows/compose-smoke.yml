@@ -1,0 +1,27 @@
+name: compose-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'contrib/containers/**'
+      - '.github/workflows/compose-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vérifie que le compose est valide et build l'image
+      - name: docker compose build
+        run: docker compose -f contrib/containers/docker/compose.yml build
+
+      # Lance un conteneur éphémère et vérifie que le binaire répond
+      - name: docker compose run --version
+        run: docker compose -f contrib/containers/docker/compose.yml run --rm shai --version
+
+      # Nettoyage (au cas où)
+      - name: docker compose down
+        if: always()
+        run: docker compose -f contrib/containers/docker/compose.yml down -v || true
