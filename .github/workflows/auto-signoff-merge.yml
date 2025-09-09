@@ -1,0 +1,123 @@
+name: Auto sign-off & merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  signoff-merge:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action == 'labeled' && contains(github.event.pull_request.labels.*.name, 'auto-merge') ||
+      github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Gather PR context
+        id: ctx
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request || (await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo,
+              pull_number: context.issue.number
+            })).data
+
+            const sameRepo = pr.head.repo.full_name === context.repo.owner + '/' + context.repo.repo
+            core.setOutput('sameRepo', sameRepo ? 'true' : 'false')
+            core.setOutput('baseRef', pr.base.ref)
+            core.setOutput('headRef', pr.head.ref)
+            core.setOutput('headRepo', pr.head.repo.full_name)
+            core.setOutput('title', pr.title)
+            core.setOutput('number', String(pr.number))
+
+      # 1) PR provenant d'une branche du même dépôt : on peut rebaser et signer chaque commit
+      - name: Checkout PR branch (same-repo)
+        if: steps.ctx.outputs.sameRepo == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.ctx.outputs.headRepo }}
+          ref: ${{ steps.ctx.outputs.headRef }}
+          fetch-depth: 0
+
+      - name: Rebase with --signoff (same-repo PR)
+        if: steps.ctx.outputs.sameRepo == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add base "https://github.com/${{ github.repository }}.git"
+          git fetch base ${{ steps.ctx.outputs.baseRef }} --depth=0
+          # Ajoute 'Signed-off-by' à chaque commit de la PR
+          git rebase --signoff "base/${{ steps.ctx.outputs.baseRef }}"
+          git push --force-with-lease
+
+      # 2) Construire les lignes Signed-off-by (unique par auteur) pour le message de merge
+      - name: Build Signed-off-by lines
+        id: sig
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = Number(${{ steps.ctx.outputs.number }})
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber, per_page: 100
+            })
+            const uniq = new Map() // key = login, value = {name,email}
+            for (const c of commits) {
+              const user = c.author || c.committer // GitHub user
+              const commit = c.commit
+              let name = (commit.author && commit.author.name) || (user && user.login) || 'contributor'
+              let email = (commit.author && commit.author.email) || (user && `${user.id}+${user.login}@users.noreply.github.com`)
+              if (!email || !email.includes('@')) {
+                // fallback emails
+                const login = (user && user.login) || name.replace(/\s+/g, '')
+                email = `${login}@users.noreply.github.com`
+              }
+              const key = (user && user.login) || `${name}<${email}>`
+              if (!uniq.has(key)) uniq.set(key, { name, email })
+            }
+            const lines = Array.from(uniq.values())
+              .map(a => `Signed-off-by: ${a.name} <${a.email}>`)
+              .join('\n')
+            core.setOutput('lines', lines)
+
+      # 3) Merge (squash) avec message incluant les sign-offs (utile surtout pour PR venant d'un fork)
+      - name: Squash-merge with sign-offs
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = Number(${{ steps.ctx.outputs.number }})
+            const pr = (await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber
+            })).data
+
+            // Construire commit message = PR body + signoffs
+            const body = (pr.body || '').trim()
+            const signoffs = (String(`${{ steps.sig.outputs.lines }}`) || '').trim()
+            const commit_message = [body, signoffs].filter(Boolean).join('\n\n')
+
+            // Titre = titre de PR
+            const commit_title = String(${{ steps.ctx.outputs.title }})
+
+            // Tente un squash-merge
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title,
+                commit_message
+              })
+              console.log('Merged with squash + sign-offs.')
+            } catch (e) {
+              core.setFailed(`Merge failed: ${e.message}`)
+            }
