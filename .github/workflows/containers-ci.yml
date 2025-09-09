@@ -1,0 +1,19 @@
+name: containers-ci
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'contrib/containers/**'
+      - '.github/workflows/containers-ci.yml'
+  pull_request:
+    paths:
+      - 'contrib/containers/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run container tests (no network needed)
+        run: bash contrib/containers/tests/test_build_and_run.sh
