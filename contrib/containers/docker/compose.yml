@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        SHAI_REF: ${SHAI_REF:-main}   # <— ajoute ceci
+        SHAI_REF: ${SHAI_REF:-v0.1.0}   # <— ajoute ceci
     # Aucun provider imposé : choisissez via `shai auth`
     volumes:
       - shai_config:/home/shai/.config/shai
