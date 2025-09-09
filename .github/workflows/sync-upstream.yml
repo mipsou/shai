@@ -1,0 +1,46 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: "7 5 * * *"   # quotidien 05:07 CET
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork default branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/ovh/shai.git
+          git fetch upstream --prune --tags
+
+      - name: Sync main (fast-forward)
+        run: |
+          git checkout main
+          git merge --ff-only upstream/main || true
+          git push origin main
+
+      - name: Mirror other branches (create/ff-only)
+        run: |
+          for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/ | sed 's#refs/remotes/upstream/##'); do
+            if [ "$b" = "main" ]; then continue; fi
+            if git show-ref --verify --quiet "refs/heads/$b"; then
+              git checkout "$b"
+              git merge --ff-only "upstream/$b" || true
+            else
+              git checkout -b "$b" "upstream/$b"
+            fi
+            git push origin "$b"
+          done
+
+      - name: Push tags
+        run: |
+          git push --tags origin
