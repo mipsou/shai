@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # Rust (workspace SHAI)
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Paris"
+    # Regroupe les MAJ pour limiter le bruit
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Évite les bumps majeurs automatiques ; tu peux retirer plus tard
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+      include: "scope"
+    # Si votre repo applique le DCO, active le signoff (sinon les PRs échoueront)
+    # (si la clé n'est pas supportée dans ton org, supprime cette ligne)
+    signoff: true
+
+  # Docker (images de base pour la conteneurisation)
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:10"
+      timezone: "Europe/Paris"
+    commit-message:
+      prefix: "deps(docker)"
+    open-pull-requests-limit: 3
+    groups:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]
+    # Exemple: ignorer les tags majeurs inattendus
+    ignore:
+      - dependency-name: "rust"
+        versions: [">=2"]  # évite un saut de génération accidentel
+
+  # GitHub Actions (CI, auto-merge, sync…)
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:20"
+      timezone: "Europe/Paris"
+    commit-message:
