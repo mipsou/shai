@@ -11,7 +11,7 @@ ARG SHAI_REF=main
 RUN git clone https://github.com/ovh/shai.git . && \
     git fetch --tags && \
     git checkout "${SHAI_REF}"
-RUN cargo build --release
+RUN cargo build --release --locked
 
 # ---- Runtime stage ----
 FROM debian:stable-slim
