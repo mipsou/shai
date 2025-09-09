@@ -1,0 +1,22 @@
+name: compose-smoke
+on:
+  pull_request:
+    paths:
+      - 'contrib/containers/**'
+      - '.github/workflows/compose-smoke.yml'
+  workflow_dispatch:
+env:
+  SHAI_REF: HEAD~1
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose build
+        run: docker compose -f contrib/containers/docker/compose.yml build
+      - name: docker compose run --version
+        run: docker compose -f contrib/containers/docker/compose.yml run --rm shai --version
+      - name: docker compose down
+        if: always()
+        run: docker compose -f contrib/containers/docker/compose.yml down -v || true
