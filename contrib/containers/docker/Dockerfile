@@ -7,18 +7,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
-# refs pilotables
+# Git ref to build (branch/tag/sha) and lock policy
 ARG SHAI_REF=main
 ARG CARGO_LOCKED=0
 
+# clone + checkout requested ref
 RUN git clone https://github.com/ovh/shai.git . \
  && git fetch --tags \
  && git checkout "${SHAI_REF}"
 
-# protocole crates.io plus rapide
+# faster registry protocol
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
-# --locked seulement si demandé
+# build (locked only when asked, e.g. for tags)
 RUN if [ "$CARGO_LOCKED" = "1" ]; then \
       cargo build --release --locked ; \
     else \
