@@ -11,11 +11,15 @@ assert_cmd bash
 
 IMG="shai:test"
 CNT="shai_test_run"
-REF="${SHAI_REF:-v0.1.0}"      # <— récupère éventuellement du CI
+
+# ref à builder : input env > ref de l'event CI > main
+REF="${SHAI_REF:-${GITHUB_REF_NAME:-main}}"
+LOCKED="${CARGO_LOCKED:-0}"
 
 log "Build de l'image"
 docker build \
   --build-arg "SHAI_REF=${REF}" \
+  --build-arg "CARGO_LOCKED=${LOCKED}" \
   -f "$ROOT/docker/Dockerfile" -t "$IMG" "$ROOT/docker"
 
 log "Exécution: --version"
