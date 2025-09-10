@@ -1,17 +1,29 @@
 # Licensed under the Apache License, Version 2.0
 
 # ---- Build stage ----
-FROM rust:1.82-slim AS build
+FROM rust:1.86-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libssl-dev ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
-
 WORKDIR /src
+
+# refs pilotables
 ARG SHAI_REF=main
-RUN git clone https://github.com/ovh/shai.git . && \
-    git fetch --tags && \
-    git checkout "${SHAI_REF}"
-RUN cargo build --release --locked
+ARG CARGO_LOCKED=0
+
+RUN git clone https://github.com/ovh/shai.git . \
+ && git fetch --tags \
+ && git checkout "${SHAI_REF}"
+
+# protocole crates.io plus rapide
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+
+# --locked seulement si demandé
+RUN if [ "$CARGO_LOCKED" = "1" ]; then \
+      cargo build --release --locked ; \
+    else \
+      cargo build --release ; \
+    fi
 
 # ---- Runtime stage ----
 FROM debian:stable-slim
