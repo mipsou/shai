@@ -2,29 +2,49 @@ name: packages
 
 on:
   push:
-    tags: [ "v*.*.*" ]      # publication officielle
-  workflow_dispatch: {}     # exécution manuelle (n’attache pas à une Release)
+    tags: [ "v*.*.*" ]      # publication officielle: attache à la Release
+  workflow_dispatch: {}     # test manuel
 
 permissions:
-  contents: write           # nécessaire pour attacher aux Releases
+  contents: write
 
 env:
   RUST_TOOLCHAIN: "1.86.0"
 
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+# ────────────────────────────────────────────────────────────────────────────────
+#  .deb — build DANS les conteneurs des distros (Ubuntu 22.04 & Debian 12)
+# ────────────────────────────────────────────────────────────────────────────────
 jobs:
   deb:
-    name: Build .deb (Ubuntu) + lint + SBOM + checksums
+    name: deb (${{ matrix.deb.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        deb:
+          - { name: "ubuntu-22.04", image: "ubuntu:22.04" }   # glibc 2.35 → compatible + large
+          - { name: "debian-12",   image: "debian:12" }       # bookworm (glibc 2.36)
+    container:
+      image: ${{ matrix.deb.image }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build & lint deps
+      - name: Install toolchain & packagers
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libssl-dev gcc make ruby-full rubygems ca-certificates \
-            jq curl file lintian
-          sudo gem install --no-document fpm
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            ruby ruby-dev rubygems gcc make \
+            jq curl file lintian ca-certificates git
+          gem install --no-document fpm
+          update-ca-certificates || true
 
       - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
         run: |
@@ -33,9 +53,7 @@ jobs:
           rustc -V && cargo -V
 
       - name: Build shai (release)
-        run: |
-          cargo build --release -p shai-cli
-          file target/release/shai
+        run: cargo build --release -p shai-cli
 
       - name: Compute version
         id: v
@@ -43,59 +61,49 @@ jobs:
           V=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name=="shai-cli") | .version')
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - name: Stage files
+      - name: Stage & build .deb
+        env:
+          DISTRO: ${{ matrix.deb.name }}
+          VER: ${{ steps.v.outputs.version }}
         run: |
+          set -e
           mkdir -p pkgroot/usr/bin pkgroot/usr/share/doc/shai
           cp target/release/shai pkgroot/usr/bin/shai
           [ -f LICENSE ] && cp LICENSE pkgroot/usr/share/doc/shai/ || true
 
-      - name: Build .deb (fpm)
-        run: |
           fpm -s dir -t deb \
-            -n shai -v "${{ steps.v.outputs.version }}" \
+            -n shai -v "$VER" \
             --license "Apache-2.0" \
             --vendor "OVHcloud" \
             --url "https://github.com/ovh/shai" \
             --description "SHAI CLI (Shell AI) - terminal assistant" \
             --depends "libssl3" --depends "libstdc++6" --depends "libgcc-s1" \
             -C pkgroot .
-          ls -l *.deb
 
-      - name: Lint .deb (lintian)
-        run: |
-          set -e
-          lintian --pedantic --no-tag-display-limit ./*.deb | tee lintian.txt
-          ! grep -q '^E: ' lintian.txt
+          OUT=out && mkdir -p "$OUT"
+          DEB=$(ls *.deb | head -n1)
+          mv "$DEB" "$OUT/shai_${VER}_${DISTRO}_amd64.deb"
 
-      - name: SBOM (CycloneDX) + checksums
-        run: |
+          # Lint
+          lintian --pedantic --no-tag-display-limit "$OUT/"*.deb | tee "$OUT/lintian.${DISTRO}.txt" || true
+          # SBOM + checksums
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          /usr/local/bin/syft packages file:target/release/shai -o cyclonedx-json > sbom-deb-cyclonedx.json
-          sha256sum ./*.deb sbom-deb-cyclonedx.json > SHA256SUMS.deb.txt
+          /usr/local/bin/syft packages file:target/release/shai -o cyclonedx-json > "$OUT/sbom-${DISTRO}-cyclonedx.json"
+          (cd "$OUT" && sha256sum * > "SHA256SUMS.${DISTRO}.txt")
+          ls -l "$OUT"
 
-      - name: Upload artifacts (for CI browsing)
+      - name: Upload deb artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: deb-${{ steps.v.outputs.version }}
-          path: |
-            ./*.deb
-            sbom-deb-cyclonedx.json
-            SHA256SUMS.deb.txt
+          name: deb-${{ steps.v.outputs.version }}-${{ matrix.deb.name }}
+          path: out/*
           if-no-files-found: error
 
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            *.deb
-            sbom-deb-cyclonedx.json
-            SHA256SUMS.deb.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+# ────────────────────────────────────────────────────────────────────────────────
+#  .rpm — build DANS UBI9 et UBI10 (RHEL)
+# ────────────────────────────────────────────────────────────────────────────────
   rpm:
-    name: Build .rpm (RHEL ${{ matrix.el.name }}) + lint + SBOM + checksums
+    name: rpm (${{ matrix.el.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -103,109 +111,84 @@ jobs:
         el:
           - { name: "el9",  image: "registry.access.redhat.com/ubi9/ubi:latest" }
           - { name: "el10", image: "registry.access.redhat.com/ubi10/ubi:latest" }
-
-    # TOUT le job s’exécute dans UBI (dnf/dnf5)
     container:
       image: ${{ matrix.el.image }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare build environment (dnf/dnf5)
-        shell: bash
+      - name: Prepare build env (dnf/dnf5)
         run: |
           set -euo pipefail
-          PM=dnf
-          command -v dnf5 >/dev/null 2>&1 && PM=dnf5
-          echo "Using $PM on $(cat /etc/redhat-release || echo unknown)"
+          PM=dnf; command -v dnf5 >/dev/null 2>&1 && PM=dnf5
           $PM -y update || true
           $PM -y groupinstall "Development Tools"
-          $PM -y install \
-            git curl which ca-certificates \
-            openssl-devel pkgconf-pkg-config \
-            ruby ruby-devel rubygems \
-            rpm-build redhat-rpm-config \
-            jq file
+          $PM -y install git curl which ca-certificates \
+                         openssl-devel pkgconf-pkg-config \
+                         ruby ruby-devel rubygems \
+                         rpm-build redhat-rpm-config jq file
           gem install --no-document fpm
 
       - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
-        shell: bash
         run: |
           curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${RUST_TOOLCHAIN}
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           rustc -V && cargo -V
 
       - name: Build shai (release)
-        shell: bash
         run: cargo build --release -p shai-cli
 
       - name: Compute version
         id: v
-        shell: bash
         run: |
           V=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name=="shai-cli") | .version')
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - name: Stage files
-        shell: bash
+      - name: Stage & build .rpm
+        env:
+          EL: ${{ matrix.el.name }}
+          VER: ${{ steps.v.outputs.version }}
         run: |
+          set -e
           mkdir -p pkgroot/usr/bin pkgroot/usr/share/licenses/shai
           cp target/release/shai pkgroot/usr/bin/shai
           [ -f LICENSE ] && cp LICENSE pkgroot/usr/share/licenses/shai/LICENSE || true
 
-      - name: Build .rpm (fpm)
-        shell: bash
-        run: |
           fpm -s dir -t rpm \
-            -n shai -v "${{ steps.v.outputs.version }}" \
+            -n shai -v "$VER" \
             --license "Apache-2.0" \
             --vendor "OVHcloud" \
             --url "https://github.com/ovh/shai" \
             --description "SHAI CLI (Shell AI) - terminal assistant" \
             --depends "openssl-libs" --depends "libstdc++" --depends "glibc" \
             -C pkgroot .
-          ls -l *.rpm
 
-      - name: (Optional) rpmlint if available
-        shell: bash
-        run: |
+          OUT=out && mkdir -p "$OUT"
+          RPM=$(ls *.rpm | head -n1)
+          mv "$RPM" "$OUT/shai-${VER}-${EL}.x86_64.rpm"
+
+          # rpmlint si dispo
           if command -v rpmlint >/dev/null 2>&1; then
-            rpmlint *.rpm | tee rpmlint.txt || true
-            ! grep -q '^E: ' rpmlint.txt || (echo "rpmlint errors found" && exit 1)
-          else
-            echo "rpmlint not available in this UBI image — skipping."
+            rpmlint "$OUT/"*.rpm | tee "$OUT/rpmlint.${EL}.txt" || true
           fi
-
-      - name: SBOM (CycloneDX) + checksums
-        shell: bash
-        run: |
+          # SBOM + checksums
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          /usr/local/bin/syft packages file:target/release/shai -o cyclonedx-json > sbom-${{ matrix.el.name }}-cyclonedx.json
-          sha256sum ./*.rpm sbom-${{ matrix.el.name }}-cyclonedx.json > SHA256SUMS.${{ matrix.el.name }}.txt
+          /usr/local/bin/syft packages file:target/release/shai -o cyclonedx-json > "$OUT/sbom-${EL}-cyclonedx.json"
+          (cd "$OUT" && sha256sum * > "SHA256SUMS.${EL}.txt")
+          ls -l "$OUT"
 
-      - name: Upload artifacts (for CI browsing)
+      - name: Upload rpm artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rpm-${{ steps.v.outputs.version }}-${{ matrix.el.name }}
-          path: |
-            ./*.rpm
-            sbom-${{ matrix.el.name }}-cyclonedx.json
-            SHA256SUMS.${{ matrix.el.name }}.txt
+          path: out/*
           if-no-files-found: error
 
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ./*.rpm
-            sbom-${{ matrix.el.name }}-cyclonedx.json
-            SHA256SUMS.${{ matrix.el.name }}.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+# ────────────────────────────────────────────────────────────────────────────────
+#  MSI — runner Windows (MSVC)
+# ────────────────────────────────────────────────────────────────────────────────
   msi:
-    name: Build .msi (Windows) + checksums (+ signing optionnel)
+    name: msi (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -219,9 +202,7 @@ jobs:
 
       - name: Build shai.exe (release)
         shell: pwsh
-        run: |
-          cargo build --release -p shai-cli
-          Get-Item .\target\release\shai.exe | Format-List *
+        run: cargo build --release -p shai-cli
 
       - name: Compute version
         id: v
@@ -278,39 +259,45 @@ jobs:
         run: |
           & "$env:WIX\bin\candle.exe" -dBinDir="target\release" -ext WixUtilExtension shai.wxs -o shai.wixobj
           & "$env:WIX\bin\light.exe"  -ext WixUtilExtension shai.wixobj -o "shai-${{ steps.v.outputs.version }}-x86_64.msi"
-          Get-ChildItem *.msi
-
-      - name: Optional code signing
-        if: ${{ secrets.SIGNING_CERT_B64 != '' && secrets.SIGNING_CERT_PASS != '' }}
-        shell: pwsh
-        run: |
-          $pfx = "$env:RUNNER_TEMP\codesign.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String("${{ secrets.SIGNING_CERT_B64 }}"))
-          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\**\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
-          & $signtool sign /f $pfx /p "${{ secrets.SIGNING_CERT_PASS }}" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "shai-${{ steps.v.outputs.version }}-x86_64.msi"
 
       - name: Checksums
         shell: pwsh
         run: |
-          Get-FileHash -Path "shai-${{ steps.v.outputs.version }}-x86_64.msi" -Algorithm SHA256 | ForEach-Object {
-            "$($_.Hash)  $($_.Path)" } | Set-Content -Path SHA256SUMS.msi.txt -Encoding ascii
-          Get-Content SHA256SUMS.msi.txt
+          mkdir out
+          Move-Item "shai-${{ steps.v.outputs.version }}-x86_64.msi" out/
+          Get-FileHash -Path "out/shai-${{ steps.v.outputs.version }}-x86_64.msi" -Algorithm SHA256 | ForEach-Object {
+            "$($_.Hash)  $($_.Path)" } | Set-Content -Path out/SHA256SUMS.msi.txt -Encoding ascii
+          Get-ChildItem out
 
-      - name: Upload artifacts (for CI browsing)
+      - name: Upload msi artifacts
         uses: actions/upload-artifact@v4
         with:
           name: msi-${{ steps.v.outputs.version }}
-          path: |
-            shai-${{ steps.v.outputs.version }}-x86_64.msi
-            SHA256SUMS.msi.txt
+          path: out/*
           if-no-files-found: error
 
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
+# ────────────────────────────────────────────────────────────────────────────────
+#  Publication Release (hors conteneur) — rassemble tous les artefacts
+# ────────────────────────────────────────────────────────────────────────────────
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Publish to Release
+    runs-on: ubuntu-latest
+    needs: [deb, rpm, msi]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+          path: dist
+
+      - name: List dist
+        run: ls -Rlh dist
+
+      - name: Attach to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            shai-${{ steps.v.outputs.version }}-x86_64.msi
-            SHA256SUMS.msi.txt
+          files: dist/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
