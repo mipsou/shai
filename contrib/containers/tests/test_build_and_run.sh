@@ -12,21 +12,31 @@ assert_cmd bash
 IMG="shai:test"
 CNT="shai_test_run"
 
-# ref à builder : input env > ref de l'event CI > main
-REF="${SHAI_REF:-${GITHUB_REF_NAME:-main}}"
-LOCKED="${CARGO_LOCKED:-0}"
+# --- Sélection de la ref à builder ---
+# Priorité : SHAI_REF (si fournie) > branche source de la PR (GITHUB_HEAD_REF) > nom de ref > main
+REF="${SHAI_REF:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}}"
 
-log "Build de l'image"
+# Normalise contre les refs invalides en CI (ex: '1/merge', ou tout nom contenant un '/')
+case "$REF" in
+  */*|*[[:space:]]*|"") REF="main" ;;
+esac
+
+LOCKED="${CARGO_LOCKED:-0}"
+log "Build ref: ${REF}  (CARGO_LOCKED=${LOCKED})"
+
+# --- Build image ---
 docker build \
   --build-arg "SHAI_REF=${REF}" \
   --build-arg "CARGO_LOCKED=${LOCKED}" \
   -f "$ROOT/docker/Dockerfile" -t "$IMG" "$ROOT/docker"
 
+# --- Exécution : --version ---
 log "Exécution: --version"
 out="$(docker run --rm "$IMG" --version || true)"
 [ -n "$out" ] || fail "sortie vide sur --version"
 pass "le binaire s'exécute (version affichée)"
 
+# --- Montages de config (sanity) ---
 log "Montage config + .env (sanity)"
 docker run --rm --name "$CNT" \
   -v "$ROOT/config/shai.config.json:/home/shai/.config/shai/config.json:ro" \
@@ -34,6 +44,7 @@ docker run --rm --name "$CNT" \
   "$IMG" --help >/dev/null 2>&1 || true
 pass "conteneur lancé avec montages"
 
+# --- Nettoyage ---
 log "Nettoyage"
 docker rm -f "$CNT" >/dev/null 2>&1 || true
 pass "OK"
