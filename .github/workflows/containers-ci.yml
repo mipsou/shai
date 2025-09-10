@@ -9,14 +9,31 @@ on:
   pull_request:
     paths:
       - 'contrib/containers/**'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag/branch/sha) to build (optional)"
+        required: false
+        default: ""
 
+# Même logique : tag -> build du tag (locked), sinon main (unlocked)
 env:
-  SHAI_REF: v0.1.0
+  SHAI_REF: ${{ inputs.ref != '' && inputs.ref || (github.ref_type == 'tag' && github.ref_name || 'main') }}
+  CARGO_LOCKED: ${{ github.ref_type == 'tag' && '1' || '0' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Petite garde-fou branding : SHAI en majuscules dans la doc
+      - name: Enforce branding (SHAI)
+        run: |
+          if git grep -In 'SHai' -- ':!**/*.png' ':!**/*.jpg' ':!**/*.svg' ; then
+            echo "Please use SHAI (all caps) for the project name. Command stays 'shai'."
+            exit 1
+          fi
+
       - name: Run container tests (no network needed)
         run: bash contrib/containers/tests/test_build_and_run.sh
