@@ -30,7 +30,7 @@ jobs:
       # Petite garde-fou branding : SHAI en majuscules dans la doc
       - name: Enforce branding (SHAI)
         run: |
-          if git grep -In 'SHai' -- ':!**/*.png' ':!**/*.jpg' ':!**/*.svg' ; then
+          if git grep -In 'SHAI' -- ':!**/*.png' ':!**/*.jpg' ':!**/*.svg' ; then
             echo "Please use SHAI (all caps) for the project name. Command stays 'shai'."
             exit 1
           fi
