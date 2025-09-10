@@ -4,8 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        SHAI_REF: ${SHAI_REF:-v0.1.0}   # <— ajoute ceci
-    # Aucun provider imposé : choisissez via `shai auth`
+        SHAI_REF: ${SHAI_REF:-main}
+        CARGO_LOCKED: ${CARGO_LOCKED:-0}
     volumes:
       - shai_config:/home/shai/.config/shai
       - type: bind
@@ -15,7 +15,8 @@ services:
     read_only: true
     tmpfs: ["/tmp", "/home/shai/.cache"]
     cap_drop: ["ALL"]
-    security_opt: [ "no-new-privileges:true" ]
+    security_opt: ["no-new-privileges:true"]
 
 volumes:
   shai_config:
+
