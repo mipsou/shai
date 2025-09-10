@@ -11,7 +11,7 @@ assert_cmd bash
 
 IMG="shai:test"
 CNT="shai_test_run"
-REF="${SHAI_REF:-main}"      # <— récupère éventuellement du CI
+REF="${SHAI_REF:-v0.1.0}"      # <— récupère éventuellement du CI
 
 log "Build de l'image"
 docker build \
