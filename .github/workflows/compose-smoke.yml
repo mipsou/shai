@@ -6,6 +6,17 @@ on:
       - 'contrib/containers/**'
       - '.github/workflows/compose-smoke.yml'
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag/branch/sha) to build (optional)"
+        required: false
+        default: ""
+
+# Utilisation du tag si l'event est un tag, sinon 'main'.
+# En run manuel, l'input 'ref' l'emporte.
+env:
+  SHAI_REF: ${{ inputs.ref != '' && inputs.ref || (github.ref_type == 'tag' && github.ref_name || 'main') }}
+  CARGO_LOCKED: ${{ github.ref_type == 'tag' && '1' || '0' }}
 
 jobs:
   smoke:
@@ -13,15 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Vérifie que le compose est valide et build l'image
       - name: docker compose build
         run: docker compose -f contrib/containers/docker/compose.yml build
 
-      # Lance un conteneur éphémère et vérifie que le binaire répond
       - name: docker compose run --version
         run: docker compose -f contrib/containers/docker/compose.yml run --rm shai --version
 
-      # Nettoyage (au cas où)
       - name: docker compose down
         if: always()
         run: docker compose -f contrib/containers/docker/compose.yml down -v || true

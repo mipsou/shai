@@ -10,6 +10,11 @@ on:
     paths:
       - 'contrib/containers/**'
 
+# Forcer la ref buildée pour éviter "1/merge" sur les PR
+env:
+  SHAI_REF: main        # on build 'main' d'ovh/shai pour les PR
+  CARGO_LOCKED: 0       # pas de --locked hors tag
+
 jobs:
   test:
     runs-on: ubuntu-latest

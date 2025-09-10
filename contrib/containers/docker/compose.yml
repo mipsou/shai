@@ -1,0 +1,26 @@
+services:
+  shai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SHAI_REF: ${SHAI_REF:-main}        # branche/tag/sha à builder
+        CARGO_LOCKED: ${CARGO_LOCKED:-0}   # 1 pour --locked (tags), 0 sinon
+    volumes:
+      - shai_config:/home/shai/.config/shai
+      - type: bind
+        source: ../.env.example
+        target: /home/shai/.env
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/shai/.cache
+    cap_drop: [ "ALL" ]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  shai_config:
+
+
